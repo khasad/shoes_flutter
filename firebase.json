@@ -1,0 +1,38 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "shoes-53468",
+          "appId": "1:546536198198:android:854a864257a1cf9fb5c897",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "shoes-53468",
+          "configurations": {
+            "android": "1:546536198198:android:854a864257a1cf9fb5c897",
+            "ios": "1:546536198198:ios:31ed9e8afbfebdd5b5c897",
+            "web": "1:546536198198:web:4bf70970ccb71931b5c897",
+            "windows": "1:546536198198:web:70db38ab78058812b5c897"
+          }
+        }
+      }
+    }
+  },
+  "hosting": {
+    "public": "build/web",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "destination": "/index.html"
+      }
+    ]
+  }
+}
