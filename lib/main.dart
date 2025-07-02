@@ -20,7 +20,9 @@ void main() async {
 
   Hive.registerAdapter(SepatuAdapter());
   Hive.registerAdapter(PembelianAdapter());
-  Hive.registerAdapter(CartItemAdapter()); // Register new adapter
+  Hive.registerAdapter(CartItemAdapter());
+  Hive.registerAdapter(FavoriteItemAdapter()); // Register new adapter
+  Hive.registerAdapter(ReviewAdapter()); // Register new adapter
 
   runApp(
     ChangeNotifierProvider(
@@ -172,6 +174,38 @@ class CartItem {
       {required this.sepatu,
       this.quantity = 1,
       this.isSelected = true}); // Default true
+}
+
+@HiveType(typeId: 3) // New HiveType for FavoriteItem
+class FavoriteItem {
+  @HiveField(0)
+  final String sepatuBarcode; // Store barcode to link to Sepatu
+  @HiveField(1)
+  final String addedTime;
+
+  FavoriteItem({required this.sepatuBarcode, required this.addedTime});
+}
+
+@HiveType(typeId: 4) // New HiveType for Review
+class Review {
+  @HiveField(0)
+  final String sepatuBarcode; // Link review to a specific shoe
+  @HiveField(1)
+  final String userName;
+  @HiveField(2)
+  final int rating; // 1-5 stars
+  @HiveField(3)
+  final String comment;
+  @HiveField(4)
+  final String reviewTime;
+
+  Review({
+    required this.sepatuBarcode,
+    required this.userName,
+    required this.rating,
+    required this.comment,
+    required this.reviewTime,
+  });
 }
 
 class SepatuAdapter extends TypeAdapter<Sepatu> {
@@ -333,10 +367,95 @@ class CartItemAdapter extends TypeAdapter<CartItem> {
           typeId == other.typeId;
 }
 
+class FavoriteItemAdapter extends TypeAdapter<FavoriteItem> {
+  @override
+  final int typeId = 3;
+
+  @override
+  FavoriteItem read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return FavoriteItem(
+      sepatuBarcode: fields[0] as String,
+      addedTime: fields[1] as String,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, FavoriteItem obj) {
+    writer
+      ..writeByte(2)
+      ..writeByte(0)
+      ..write(obj.sepatuBarcode)
+      ..writeByte(1)
+      ..write(obj.addedTime);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is FavoriteItemAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
+class ReviewAdapter extends TypeAdapter<Review> {
+  @override
+  final int typeId = 4;
+
+  @override
+  Review read(BinaryReader reader) {
+    final numOfFields = reader.readByte();
+    final fields = <int, dynamic>{
+      for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
+    };
+    return Review(
+      sepatuBarcode: fields[0] as String,
+      userName: fields[1] as String,
+      rating: fields[2] as int,
+      comment: fields[3] as String,
+      reviewTime: fields[4] as String,
+    );
+  }
+
+  @override
+  void write(BinaryWriter writer, Review obj) {
+    writer
+      ..writeByte(5)
+      ..writeByte(0)
+      ..write(obj.sepatuBarcode)
+      ..writeByte(1)
+      ..write(obj.userName)
+      ..writeByte(2)
+      ..write(obj.rating)
+      ..writeByte(3)
+      ..write(obj.comment)
+      ..writeByte(4)
+      ..write(obj.reviewTime);
+  }
+
+  @override
+  int get hashCode => typeId.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ReviewAdapter &&
+          runtimeType == other.runtimeType &&
+          typeId == other.typeId;
+}
+
 class SepatuProvider extends ChangeNotifier {
   late Box<Sepatu> _sepatuBox;
   late Box<Pembelian> _pembelianBox;
-  late Box<CartItem> _cartBox; // New box for cart items
+  late Box<CartItem> _cartBox;
+  late Box<FavoriteItem> _favoriteBox; // New box for favorites
+  late Box<Review> _reviewBox; // New box for reviews
 
   List<Sepatu> get dataSepatu =>
       _sepatuBox.values.where((s) => !s.isDeleted).toList();
@@ -347,6 +466,18 @@ class SepatuProvider extends ChangeNotifier {
 
   List<CartItem> get cart => _cartBox.values.toList();
 
+  // New getter for favorite items (returns Sepatu objects)
+  List<Sepatu> get favoriteSepatu {
+    final favoriteBarcodes =
+        _favoriteBox.values.map((f) => f.sepatuBarcode).toSet();
+    return _sepatuBox.values
+        .where((s) => favoriteBarcodes.contains(s.barcode))
+        .toList();
+  }
+
+  // New getter for all reviews
+  List<Review> get allReviews => _reviewBox.values.toList();
+
   SepatuProvider() {
     _initBoxes();
   }
@@ -354,8 +485,12 @@ class SepatuProvider extends ChangeNotifier {
   Future<void> _initBoxes() async {
     _sepatuBox = await Hive.openBox<Sepatu>('sepatuBox');
     _pembelianBox = await Hive.openBox<Pembelian>('pembelianBox');
-    _cartBox = await Hive.openBox<CartItem>('cartBox'); // Open cart box
+    _cartBox = await Hive.openBox<CartItem>('cartBox');
+    _favoriteBox =
+        await Hive.openBox<FavoriteItem>('favoriteBox'); // Open favorite box
+    _reviewBox = await Hive.openBox<Review>('reviewBox'); // Open review box
 
+    // ... (existing initial data for _sepatuBox) ...
     if (_sepatuBox.isEmpty) {
       _sepatuBox.add(
         Sepatu(
@@ -438,6 +573,33 @@ class SepatuProvider extends ChangeNotifier {
         ),
       );
     }
+
+    // Add some initial reviews for demonstration
+    if (_reviewBox.isEmpty) {
+      _reviewBox.add(Review(
+        sepatuBarcode: "NK001",
+        userName: "Pengguna A",
+        rating: 5,
+        comment: "Sepatu ini sangat nyaman dan stylish!",
+        reviewTime:
+            DateTime.now().subtract(const Duration(days: 10)).toString(),
+      ));
+      _reviewBox.add(Review(
+        sepatuBarcode: "NK001",
+        userName: "Pengguna B",
+        rating: 4,
+        comment: "Kualitas bagus, tapi sedikit mahal.",
+        reviewTime: DateTime.now().subtract(const Duration(days: 5)).toString(),
+      ));
+      _reviewBox.add(Review(
+        sepatuBarcode: "AD002",
+        userName: "Pengguna C",
+        rating: 5,
+        comment: "Cocok untuk lari jarak jauh, bantalan empuk.",
+        reviewTime: DateTime.now().subtract(const Duration(days: 7)).toString(),
+      ));
+    }
+
     notifyListeners();
   }
 
@@ -600,6 +762,44 @@ class SepatuProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+// --- Favorite Methods ---
+  bool isFavorite(Sepatu sepatu) {
+    return _favoriteBox.values.any((f) => f.sepatuBarcode == sepatu.barcode);
+  }
+
+  void toggleFavorite(Sepatu sepatu) {
+    if (isFavorite(sepatu)) {
+      final keyToRemove = _favoriteBox.keys.firstWhere(
+          (k) => _favoriteBox.get(k)?.sepatuBarcode == sepatu.barcode);
+      _favoriteBox.delete(keyToRemove);
+    } else {
+      _favoriteBox.add(FavoriteItem(
+        sepatuBarcode: sepatu.barcode,
+        addedTime: DateTime.now().toString(),
+      ));
+    }
+    notifyListeners();
+  }
+
+  // --- Review Methods ---
+  List<Review> getReviewsForSepatu(String sepatuBarcode) {
+    return _reviewBox.values
+        .where((r) => r.sepatuBarcode == sepatuBarcode)
+        .toList();
+  }
+
+  double getAverageRatingForSepatu(String sepatuBarcode) {
+    final reviews = getReviewsForSepatu(sepatuBarcode);
+    if (reviews.isEmpty) return 0.0;
+    final totalRating = reviews.fold(0, (sum, review) => sum + review.rating);
+    return totalRating / reviews.length;
+  }
+
+  void addReview(Review review) {
+    _reviewBox.add(review);
+    notifyListeners();
+  }
+
   void confirmPurchase(
       List<CartItem> items, String pembeliNama, String alamatKirim) {
     // Filter hanya item yang terpilih
@@ -715,7 +915,9 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         fontFamily: 'Montserrat',
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.blueAccent),
-        scaffoldBackgroundColor: const Color.fromARGB(255, 245, 245, 255),
+        // UBAH BARIS INI:
+        scaffoldBackgroundColor:
+            Colors.white, // Mengubah latar belakang menjadi putih
         appBarTheme: const AppBarTheme(
           color: Colors.indigo,
           foregroundColor: Colors.white,
@@ -728,11 +930,21 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class LoginPage extends StatelessWidget {
-  LoginPage({super.key});
+// ... (bagian import dan kelas lainnya tetap sama) ...
 
+// ... (remaining classes) ...
+
+class LoginPage extends StatefulWidget {
+  const LoginPage({super.key}); // Tambahkan const constructor
+
+  @override
+  State<LoginPage> createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
   final usernameController = TextEditingController();
   final passwordController = TextEditingController();
+  bool _obscureText = true; // State untuk mengontrol visibilitas password
 
   void login(BuildContext context) {
     String user = usernameController.text;
@@ -741,7 +953,7 @@ class LoginPage extends StatelessWidget {
     if (user == "admin" && pass == "admin123") {
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (_) => const MainPage()),
+        MaterialPageRoute(builder: (_) => const LihatDataPage()),
       );
     } else if (user == "member" && pass == "member123") {
       Navigator.pushReplacement(
@@ -749,564 +961,16 @@ class LoginPage extends StatelessWidget {
         MaterialPageRoute(builder: (_) => const ShopPage()),
       );
     } else {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Login gagal. Coba lagi!")));
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final bool isSmallScreen = screenWidth < 600;
-
-    return Scaffold(
-      body: isSmallScreen
-          ? SingleChildScrollView(
-              child: Padding(
-                padding: const EdgeInsets.all(24.0),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Text(
-                      "Halo!\nSelamat datang di ShoeSpeed 👋",
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 22,
-                        fontWeight: FontWeight.w600,
-                        color: Colors.indigo,
-                      ),
-                    ),
-                    const SizedBox(height: 32),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(24.0),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black12,
-                            blurRadius: 10,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            "Selamat Datang!",
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.indigo,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: usernameController,
-                            decoration: InputDecoration(
-                              labelText: "Username",
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                    color: Colors.blue, width: 2),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: passwordController,
-                            obscureText: true,
-                            decoration: InputDecoration(
-                              labelText: "Password",
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                    color: Colors.blue, width: 2),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton(
-                            onPressed: () => login(context),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 48),
-                              backgroundColor: const Color.fromARGB(
-                                255,
-                                0,
-                                191,
-                                255,
-                              ),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              "Login",
-                              style: TextStyle(fontSize: 16),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : Row(
-              children: [
-                Expanded(
-                  flex: 1,
-                  child: Padding(
-                    padding: const EdgeInsets.all(0.0),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        image: DecorationImage(
-                          image: const AssetImage("assets/images/images.png"),
-                          fit: BoxFit.cover,
-                          colorFilter: ColorFilter.mode(
-                            Colors.black.withOpacity(0.45),
-                            BlendMode.darken,
-                          ),
-                        ),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black54,
-                            blurRadius: 10.0,
-                            offset: Offset(0, 5),
-                          ),
-                        ],
-                        borderRadius: const BorderRadius.only(
-                          topLeft: Radius.zero,
-                          bottomLeft: Radius.zero,
-                          topRight:
-                              Radius.circular(20.0), // Keep right side rounded
-                          bottomRight:
-                              Radius.circular(20.0), // Keep right side rounded
-                        ),
-                      ),
-                      child: const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(32.0),
-                          child: Text(
-                            "Halo!\nSelamat datang di ShoeSpeed 👋\n\nLogin untuk melanjutkan.",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 30,
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                Expanded(
-                  flex: 1,
-                  child: Center(
-                    child: Container(
-                      width: 350,
-                      padding: const EdgeInsets.all(24.0),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(16),
-                        boxShadow: const [
-                          BoxShadow(
-                            color: Colors.black12,
-                            blurRadius: 10,
-                            offset: Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Text(
-                            "Selamat Datang!",
-                            style: TextStyle(
-                              fontSize: 28,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.indigo,
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          TextField(
-                            controller: usernameController,
-                            decoration: InputDecoration(
-                              labelText: "Username",
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                    color: Colors.blue, width: 2),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: passwordController,
-                            obscureText: true,
-                            decoration: InputDecoration(
-                              labelText: "Password",
-                              filled: true,
-                              fillColor: Colors.grey[100],
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                borderSide: const BorderSide(
-                                    color: Colors.blue, width: 2),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 24),
-                          ElevatedButton(
-                            onPressed: () => login(context),
-                            style: ElevatedButton.styleFrom(
-                              minimumSize: const Size(double.infinity, 48),
-                              backgroundColor: const Color.fromARGB(
-                                255,
-                                0,
-                                191,
-                                255,
-                              ),
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                            ),
-                            child: const Text(
-                              "Login",
-                              style: TextStyle(fontSize: 16),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-    );
-  }
-}
-
-class MainPage extends StatefulWidget {
-  const MainPage({super.key});
-
-  @override
-  State<MainPage> createState() => _MainPageState();
-}
-
-class _MainPageState extends State<MainPage> {
-  int selectedPage = 0;
-  bool sidebarOpen = true;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _setSidebarOpenBasedOnOnWidth();
-  }
-
-  void _setSidebarOpenBasedOnOnWidth() {
-    final screenWidth = MediaQuery.of(context).size.width;
-    setState(() {
-      sidebarOpen = screenWidth > 700;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final bool isLargeScreen = screenWidth > 700;
-    final List<Widget> pages = [
-      const StokInPage(),
-      const LihatDataPage(),
-    ];
-
-    return Scaffold(
-      appBar: !isLargeScreen
-          ? AppBar(
-              title: const Text('ShoesSpeed - Admin'),
-              actions: [
-                TextButton(
-                  onPressed: () {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(builder: (_) => LoginPage()),
-                    );
-                  },
-                  child: const Text(
-                    'Logout',
-                    style: TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            )
-          : null,
-      drawer: !isLargeScreen
-          ? Drawer(
-              child: ListView(
-                padding: EdgeInsets.zero,
-                children: <Widget>[
-                  const DrawerHeader(
-                    decoration: BoxDecoration(color: Colors.indigo),
-                    child: Text(
-                      'Admin Menu',
-                      style: TextStyle(color: Colors.white, fontSize: 24),
-                    ),
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.add_box),
-                    title: const Text('Tambah Data Sepatu'),
-                    selected: selectedPage == 0,
-                    onTap: () {
-                      setState(() => selectedPage = 0);
-                      Navigator.pop(context);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.view_list),
-                    title: const Text('Lihat Data Sepatu'),
-                    selected: selectedPage == 1,
-                    onTap: () {
-                      setState(() => selectedPage = 1);
-                      Navigator.pop(context);
-                    },
-                  ),
-                  ListTile(
-                    leading: const Icon(Icons.logout),
-                    title: const Text('Logout'),
-                    onTap: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) => LoginPage()),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            )
-          : null,
-      body: Column(
-        children: [
-          if (isLargeScreen)
-            Container(
-              width: double.infinity,
-              color: Colors.indigo,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'ShoesSpeed - Admin',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      Navigator.pushReplacement(
-                        context,
-                        MaterialPageRoute(builder: (_) => LoginPage()),
-                      );
-                    },
-                    child: const Text(
-                      'Logout',
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            child: isLargeScreen
-                ? Row(
-                    children: [
-                      AnimatedContainer(
-                        duration: const Duration(milliseconds: 300),
-                        width: sidebarOpen ? 200 : 60,
-                        color: const Color.fromARGB(255, 40, 42, 60),
-                        child: Column(
-                          children: [
-                            const SizedBox(height: 12),
-                            IconButton(
-                              icon: Icon(
-                                sidebarOpen
-                                    ? Icons.arrow_back_ios
-                                    : Icons.arrow_forward_ios,
-                                color: Colors.white,
-                              ),
-                              onPressed: () => setState(
-                                () => sidebarOpen = !sidebarOpen,
-                              ),
-                            ),
-                            MenuButton(
-                              icon: Icons.add_box,
-                              title: 'Tambah',
-                              selected: selectedPage == 0,
-                              sidebarOpen: sidebarOpen,
-                              onTap: () => setState(() => selectedPage = 0),
-                            ),
-                            MenuButton(
-                              icon: Icons.view_list,
-                              title: 'Data',
-                              selected: selectedPage == 1,
-                              sidebarOpen: sidebarOpen,
-                              onTap: () => setState(() => selectedPage = 1),
-                            ),
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: pages[selectedPage],
-                      ),
-                    ],
-                  )
-                : pages[selectedPage],
-          ),
-          Container(
-            width: double.infinity,
-            color: const Color.fromARGB(255, 200, 220, 255),
-            padding: const EdgeInsets.all(8),
-            child: const Center(
-              child: Text(
-                'V1 - Aplikasi CRUD Sepatu',
-                style: TextStyle(color: Colors.black54),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class MenuButton extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final bool selected;
-  final VoidCallback onTap;
-  final bool sidebarOpen;
-
-  const MenuButton({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.selected,
-    required this.onTap,
-    required this.sidebarOpen,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? Colors.blueAccent : Colors.transparent,
-      child: ListTile(
-        leading: Icon(icon, color: Colors.white),
-        title: sidebarOpen
-            ? Text(
-                title,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              )
-            : null,
-        onTap: onTap,
-      ),
-    );
-  }
-}
-
-class StokInPage extends StatefulWidget {
-  const StokInPage({super.key});
-
-  @override
-  State<StokInPage> createState() => _StokInPageState();
-}
-
-class _StokInPageState extends State<StokInPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _barcodeController = TextEditingController();
-  final _namaController = TextEditingController();
-  final _brandController = TextEditingController();
-  final _ukuranController = TextEditingController();
-  final _jumlahController = TextEditingController();
-  final _detailController = TextEditingController();
-  final _hargaController = TextEditingController();
-  final _gambarPathController = TextEditingController();
-  String _selectedKategori = 'Umum'; // Default value for new field
-
-  final List<String> _kategoriOptions = [
-    'Umum',
-    'Running',
-    'Casual',
-    'Lifestyle',
-    'Basket',
-    'Sepak Bola',
-  ];
-
-  void _submit() {
-    if (_formKey.currentState!.validate()) {
-      final sepatu = Sepatu(
-        barcode: _barcodeController.text,
-        nama: _namaController.text,
-        brand: _brandController.text,
-        ukuran: _ukuranController.text,
-        jumlah: _jumlahController.text,
-        detail: _detailController.text,
-        waktuInput: DateTime.now().toString(),
-        harga: _hargaController.text,
-        gambarPath: _gambarPathController.text.isNotEmpty
-            ? _gambarPathController.text
-            : null,
-        kategori: _selectedKategori, // Save new field
-      );
-      // Panggil method tambahSepatu dari provider
-      Provider.of<SepatuProvider>(context, listen: false).tambahSepatu(sepatu);
-      _formKey.currentState!.reset();
-      _gambarPathController.clear();
-      setState(() {
-        _selectedKategori = 'Umum'; // Reset category
-      });
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data sepatu berhasil ditambahkan!')),
+        const SnackBar(content: Text("Login gagal. Coba lagi!")),
       );
     }
   }
 
   @override
   void dispose() {
-    _barcodeController.dispose();
-    _namaController.dispose();
-    _brandController.dispose();
-    _ukuranController.dispose();
-    _jumlahController.dispose();
-    _detailController.dispose();
-    _hargaController.dispose();
-    _gambarPathController.dispose();
+    usernameController.dispose();
+    passwordController.dispose();
     super.dispose();
   }
 
@@ -1315,147 +979,204 @@ class _StokInPageState extends State<StokInPage> {
     final screenWidth = MediaQuery.of(context).size.width;
     final bool isSmallScreen = screenWidth < 600;
 
-    return Center(
-      child: SizedBox(
-        width: isSmallScreen ? double.infinity : 600,
-        child: Card(
-          elevation: 8,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          margin: EdgeInsets.all(isSmallScreen ? 16 : 24),
-          child: Padding(
-            padding: const EdgeInsets.all(24),
-            child: Form(
-              key: _formKey,
-              child: ListView(
-                shrinkWrap: true,
-                children: [
-                  const Text(
-                    'TAMBAH DATA SEPATU',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.indigo,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _barcodeController,
-                    decoration: const InputDecoration(labelText: 'Barcode'),
-                    validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _namaController,
-                    decoration: const InputDecoration(labelText: 'Nama'),
-                    validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _brandController,
-                    decoration: const InputDecoration(labelText: 'Brand'),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextFormField(
-                          controller: _ukuranController,
-                          decoration: const InputDecoration(
-                            labelText: 'Ukuran',
-                          ),
-                          keyboardType: TextInputType.number,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: TextFormField(
-                          controller: _jumlahController,
-                          decoration: const InputDecoration(
-                            labelText: 'Jumlah',
-                          ),
-                          keyboardType: TextInputType.number,
-                          validator: (val) {
-                            if (val!.isEmpty) return 'Wajib diisi';
-                            if (int.tryParse(val) == null) return 'Harus angka';
-                            return null;
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _hargaController,
-                    decoration: const InputDecoration(labelText: 'Harga (Rp)'),
-                    keyboardType: TextInputType.number,
-                    validator: (val) {
-                      if (val!.isEmpty) return 'Wajib diisi';
-                      if (int.tryParse(val) == null) return 'Harus angka';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    value: _selectedKategori,
-                    decoration: const InputDecoration(
-                      labelText: 'Kategori',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _kategoriOptions.map((String kategori) {
-                      return DropdownMenuItem<String>(
-                        value: kategori,
-                        child: Text(kategori),
-                      );
-                    }).toList(),
-                    onChanged: (String? newValue) {
-                      setState(() {
-                        _selectedKategori = newValue!;
-                      });
-                    },
-                    validator: (val) => val == null || val.isEmpty
-                        ? 'Pilih kategori sepatu'
-                        : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: _detailController,
-                    decoration: const InputDecoration(labelText: 'Detail'),
-                    maxLines: 3,
-                  ),
-                  const SizedBox(height: 20),
-                  TextFormField(
-                    controller: _gambarPathController,
-                    decoration: const InputDecoration(
-                      labelText: 'Path Gambar (e.g., assets/images/sepatu.png)',
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      OutlinedButton(
-                        onPressed: () {
-                          _formKey.currentState!.reset();
-                          _gambarPathController.clear();
-                          setState(() {
-                            _selectedKategori = 'Umum';
-                          });
-                        },
-                        child: const Text('Batal'),
-                      ),
-                      const SizedBox(width: 16),
-                      ElevatedButton(
-                        onPressed: _submit,
-                        child: const Text('Simpan'),
-                      ),
-                    ],
-                  ),
-                ],
+    return Scaffold(
+      body: Center(
+        // Memusatkan seluruh konten
+        child: SingleChildScrollView(
+          // Agar bisa discroll di layar kecil
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment:
+                CrossAxisAlignment.center, // Memusatkan secara horizontal
+            children: [
+              // Image above (e.g., Logo)
+              Image.asset(
+                "assets/images/blue.png", // Ganti dengan path gambar logo/gambar di atas
+                height: isSmallScreen ? 50 : 150, // Sesuaikan tinggi gambar
+                width: isSmallScreen ? 300 : 150, // Sesuaikan lebar gambar
+                fit: BoxFit.contain,
               ),
-            ),
+              const SizedBox(
+                  height: 16), // Jarak antara gambar logo dan teks sambutan
+
+              // Teks "Welcome back!"
+              const Text(
+                "Welcome back!",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 28,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.indigo,
+                  shadows: [
+                    Shadow(
+                      blurRadius: 5.0,
+                      color: Colors.black26,
+                      offset: Offset(1.0, 1.0),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(
+                  height: 8), // Jarak antara teks sambutan dan teks baru
+
+              // Teks "Enter your username and password"
+              Text(
+                "Enter your username and password",
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 16,
+                  color: Colors.grey[600], // Warna abu-abu
+                ),
+              ),
+              const SizedBox(height: 48), // Jarak antara teks baru dan form
+
+              // Username TextField
+              SizedBox(
+                // Tambahkan SizedBox untuk mengontrol lebar TextField
+                width: isSmallScreen ? double.infinity : 400,
+                child: TextField(
+                  controller: usernameController,
+                  decoration: InputDecoration(
+                    labelText: "Username",
+                    hintText: "Masukkan username Anda",
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    // UBAH BAGIAN INI UNTUK OUTLINE
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(
+                          color: Colors.grey,
+                          width: 1.0), // Garis outline default
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(
+                        color: Color.fromARGB(255, 0, 150, 250),
+                        width: 2.0, // Garis outline saat fokus lebih tebal
+                      ),
+                    ),
+                    prefixIcon: const Icon(Icons.person, color: Colors.indigo),
+                    // Untuk garis pemisah antara ikon dan teks, kita bisa menggunakan `prefix`
+                    // yang lebih kompleks atau `VerticalDivider` di dalam `prefixIcon`.
+                    // Namun, cara paling umum adalah dengan `prefixIconConstraints`
+                    // dan mungkin sedikit padding pada ikon itu sendiri.
+                    // Jika Anda ingin garis vertikal yang jelas, Anda bisa menggunakan `prefix` widget.
+                    prefixIconConstraints:
+                        const BoxConstraints(minWidth: 48, minHeight: 48),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16), // Jarak antara username dan password
+
+              // Password TextField
+              SizedBox(
+                // Tambahkan SizedBox untuk mengontrol lebar TextField
+                width: isSmallScreen ? double.infinity : 400,
+                child: TextField(
+                  controller: passwordController,
+                  obscureText:
+                      _obscureText, // Gunakan state _obscureText di sini
+                  decoration: InputDecoration(
+                    labelText: "Password",
+                    hintText: "Masukkan password Anda",
+                    filled: true,
+                    fillColor: Colors.grey[50],
+                    // UBAH BAGIAN INI UNTUK OUTLINE
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(
+                          color: Colors.grey,
+                          width: 1.0), // Garis outline default
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(15),
+                      borderSide: const BorderSide(
+                        color: Color.fromARGB(255, 0, 150, 250),
+                        width: 2.0, // Garis outline saat fokus lebih tebal
+                      ),
+                    ),
+                    prefixIcon: const Icon(Icons.lock, color: Colors.indigo),
+                    // Untuk garis pemisah antara ikon dan teks
+                    prefixIconConstraints:
+                        const BoxConstraints(minWidth: 48, minHeight: 48),
+                    // Hapus suffixIcon IconButton yang lama
+                  ),
+                ),
+              ),
+              const SizedBox(
+                  height: 8), // Jarak antara password dan tombol geser
+
+              // Tombol Geser (Switch) untuk Lihat Password
+              SizedBox(
+                // Bungkus dengan SizedBox untuk mengontrol lebar
+                width: isSmallScreen ? double.infinity : 400,
+                child: Row(
+                  mainAxisAlignment:
+                      MainAxisAlignment.end, // Posisikan ke kanan
+                  children: [
+                    Text(
+                      _obscureText
+                          ? "Tampilkan Password"
+                          : "Sembunyikan Password",
+                      style: TextStyle(color: Colors.grey[700]),
+                    ),
+                    Switch(
+                      value:
+                          !_obscureText, // Value adalah kebalikan dari _obscureText
+                      onChanged: (bool newValue) {
+                        setState(() {
+                          _obscureText = !newValue; // Perbarui _obscureText
+                        });
+                      },
+                      activeColor: Colors.blueAccent, // Warna saat aktif
+                      inactiveThumbColor:
+                          Colors.grey, // Warna thumb saat tidak aktif
+                      inactiveTrackColor:
+                          Colors.grey[300], // Warna track saat tidak aktif
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(
+                  height: 32), // Jarak antara tombol geser dan tombol login
+
+              // Login Button
+              Container(
+                // Tetap gunakan Container untuk gradient pada tombol
+                width: isSmallScreen
+                    ? double.infinity
+                    : 400, // Sesuaikan lebar tombol
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(15),
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color.fromARGB(255, 0, 191, 255),
+                      Color.fromARGB(255, 0, 150, 250),
+                    ],
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                  ),
+                ),
+                child: ElevatedButton(
+                  onPressed: () => login(context),
+                  style: ElevatedButton.styleFrom(
+                    minimumSize: const Size(double.infinity, 55),
+                    backgroundColor: Colors.transparent,
+                    foregroundColor: Colors.white,
+                    shadowColor: Colors.transparent,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(15),
+                    ),
+                    padding: EdgeInsets.zero,
+                  ),
+                  child: const Text(
+                    "Login",
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -1509,26 +1230,31 @@ class _LihatDataPageState extends State<LihatDataPage> {
                 children: [
                   TextFormField(
                     controller: barcodeController,
-                    decoration: const InputDecoration(labelText: 'Barcode'),
+                    decoration: const InputDecoration(
+                        labelText: 'Barcode', border: OutlineInputBorder()),
                     validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
                   ),
                   TextFormField(
                     controller: namaController,
-                    decoration: const InputDecoration(labelText: 'Nama'),
+                    decoration: const InputDecoration(
+                        labelText: 'Nama', border: OutlineInputBorder()),
                     validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
                   ),
                   TextFormField(
                     controller: brandController,
-                    decoration: const InputDecoration(labelText: 'Brand'),
+                    decoration: const InputDecoration(
+                        labelText: 'Brand', border: OutlineInputBorder()),
                   ),
                   TextFormField(
                     controller: ukuranController,
-                    decoration: const InputDecoration(labelText: 'Ukuran'),
+                    decoration: const InputDecoration(
+                        labelText: 'Ukuran', border: OutlineInputBorder()),
                     keyboardType: TextInputType.number,
                   ),
                   TextFormField(
                     controller: jumlahController,
-                    decoration: const InputDecoration(labelText: 'Jumlah'),
+                    decoration: const InputDecoration(
+                        labelText: 'Jumlah', border: OutlineInputBorder()),
                     keyboardType: TextInputType.number,
                     validator: (val) {
                       if (val!.isEmpty) return 'Wajib diisi';
@@ -1540,6 +1266,7 @@ class _LihatDataPageState extends State<LihatDataPage> {
                     controller: hargaController,
                     decoration: const InputDecoration(
                       labelText: 'Harga (Rp)',
+                      border: OutlineInputBorder(),
                     ),
                     keyboardType: TextInputType.number,
                     validator: (val) {
@@ -1570,7 +1297,8 @@ class _LihatDataPageState extends State<LihatDataPage> {
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: detailController,
-                    decoration: const InputDecoration(labelText: 'Detail'),
+                    decoration: const InputDecoration(
+                        labelText: 'Detail', border: OutlineInputBorder()),
                     maxLines: 3,
                   ),
                   const SizedBox(height: 20),
@@ -1578,6 +1306,7 @@ class _LihatDataPageState extends State<LihatDataPage> {
                     controller: gambarPathController,
                     decoration: const InputDecoration(
                       labelText: 'Path Gambar (e.g., assets/images/sepatu.png)',
+                      border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -2016,6 +1745,10 @@ class _ShopPageState extends State<ShopPage> {
     // Filter sepatu yang tersedia (tidak dihapus)
     List<Sepatu> allShopShoes = sepatuProvider.dataSepatu;
 
+    // Dapatkan lebar layar untuk penyesuaian responsif
+    final screenWidth = MediaQuery.of(context).size.width;
+    final bool isSmallScreen = screenWidth < 600; // Definisi layar kecil
+
     // Apply search filter
     if (_searchQuery.isNotEmpty) {
       allShopShoes = allShopShoes.where((sepatu) {
@@ -2040,9 +1773,16 @@ class _ShopPageState extends State<ShopPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Toko ShoeSpeed"),
+        title: Text(
+          "Toko ShoeSpeed",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: isSmallScreen ? 18 : 20, // Ukuran font disesuaikan
+          ),
+        ),
+        centerTitle: true,
+        elevation: 0,
         actions: [
-          // TOMBOL PROFIL SAYA (menggantikan Riwayat Pembelian & Logout)
           IconButton(
             icon: const Icon(Icons.account_circle, color: Colors.white),
             tooltip: 'Profil Saya',
@@ -2059,38 +1799,43 @@ class _ShopPageState extends State<ShopPage> {
         children: [
           // Banner Promosi
           Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: EdgeInsets.all(
+                isSmallScreen ? 8.0 : 16.0), // Padding disesuaikan
             child: Container(
-              height: 150,
+              height: isSmallScreen ? 120 : 160, // Tinggi disesuaikan
               width: double.infinity,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(15),
+                borderRadius: BorderRadius.circular(
+                    isSmallScreen ? 15 : 20), // Radius disesuaikan
                 image: const DecorationImage(
-                  image: AssetImage(
-                      'assets/images/bcshoes.png'), // Ganti dengan path gambar banner Anda
+                  image: AssetImage('assets/images/bcshoes.png'),
                   fit: BoxFit.cover,
+                  colorFilter:
+                      ColorFilter.mode(Colors.black54, BlendMode.darken),
                 ),
                 boxShadow: [
                   BoxShadow(
-                    color: Colors.grey.withOpacity(0.5),
-                    spreadRadius: 2,
-                    blurRadius: 7,
-                    offset: const Offset(0, 3),
+                    color: Colors.grey.withOpacity(0.6),
+                    spreadRadius: 3,
+                    blurRadius: 10,
+                    offset: const Offset(0, 5),
                   ),
                 ],
               ),
-              child: const Center(
+              child: Center(
                 child: Text(
-                  'Diskon Spesial Akhir Tahun!',
+                  'Diskon Spesial Akhir Tahun!\nUp to 50% Off!',
+                  textAlign: TextAlign.center,
                   style: TextStyle(
                     color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    shadows: [
+                    fontSize:
+                        isSmallScreen ? 20 : 26, // Ukuran font disesuaikan
+                    fontWeight: FontWeight.w900,
+                    shadows: const [
                       Shadow(
-                        blurRadius: 10.0,
+                        blurRadius: 12.0,
                         color: Colors.black,
-                        offset: Offset(2.0, 2.0),
+                        offset: Offset(3.0, 3.0),
                       ),
                     ],
                   ),
@@ -2100,18 +1845,32 @@ class _ShopPageState extends State<ShopPage> {
           ),
           // Search Bar
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: EdgeInsets.symmetric(
+                horizontal: isSmallScreen ? 8.0 : 16.0, vertical: 8.0),
             child: TextField(
               decoration: InputDecoration(
-                hintText: 'Cari sepatu...',
-                prefixIcon: const Icon(Icons.search),
+                hintText: 'Cari sepatu favoritmu...',
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: _searchQuery.isNotEmpty
+                    ? IconButton(
+                        icon: const Icon(Icons.clear, color: Colors.grey),
+                        onPressed: () {
+                          setState(() {
+                            _searchQuery = '';
+                            // Clear text field content (requires a TextEditingController)
+                          });
+                        },
+                      )
+                    : null,
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(isSmallScreen ? 10 : 12),
                   borderSide: BorderSide.none,
                 ),
                 filled: true,
-                fillColor: Colors.grey[200],
+                fillColor: Colors.grey[100],
+                contentPadding: EdgeInsets.symmetric(
+                    vertical: isSmallScreen ? 12 : 14,
+                    horizontal: isSmallScreen ? 12 : 16),
               ),
               onChanged: (value) {
                 setState(() {
@@ -2122,18 +1881,22 @@ class _ShopPageState extends State<ShopPage> {
           ),
           // Category Filter
           Padding(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            padding: EdgeInsets.symmetric(
+                horizontal: isSmallScreen ? 8.0 : 16.0, vertical: 8.0),
             child: DropdownButtonFormField<String>(
-              value: _selectedCategoryFilter ??
-                  _kategoriOptions[0], // Default to "Semua Kategori"
+              value: _selectedCategoryFilter ?? _kategoriOptions[0],
               decoration: InputDecoration(
                 labelText: 'Pilih Kategori',
+                labelStyle: TextStyle(color: Colors.grey[700]),
                 border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(isSmallScreen ? 10 : 12),
+                  borderSide: BorderSide.none,
                 ),
                 filled: true,
                 fillColor: Colors.grey[100],
+                contentPadding: EdgeInsets.symmetric(
+                    vertical: isSmallScreen ? 12 : 14,
+                    horizontal: isSmallScreen ? 12 : 16),
               ),
               items: _kategoriOptions.map((String category) {
                 return DropdownMenuItem<String>(
@@ -2149,15 +1912,17 @@ class _ShopPageState extends State<ShopPage> {
               },
             ),
           ),
-          // Bagian "Semua Sepatu" (sesuai gambar, tidak ada "Top Sale" terpisah)
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+          // Bagian "Semua Sepatu"
+          Padding(
+            padding: EdgeInsets.symmetric(
+                horizontal: isSmallScreen ? 8.0 : 16.0,
+                vertical: isSmallScreen ? 8.0 : 12.0),
             child: Align(
               alignment: Alignment.centerLeft,
               child: Text(
                 'Semua Sepatu',
                 style: TextStyle(
-                    fontSize: 22,
+                    fontSize: isSmallScreen ? 20 : 24,
                     fontWeight: FontWeight.bold,
                     color: Colors.indigo),
               ),
@@ -2165,14 +1930,49 @@ class _ShopPageState extends State<ShopPage> {
           ),
           Expanded(
             child: allShopShoes.isEmpty
-                ? const Center(
-                    child: Text(
-                      'Tidak ada sepatu tersedia saat ini.',
-                      style: TextStyle(fontSize: 18, color: Colors.grey),
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.sentiment_dissatisfied,
+                          size: isSmallScreen ? 60 : 80,
+                          color: Colors.grey[400],
+                        ),
+                        SizedBox(height: isSmallScreen ? 12 : 16),
+                        Text(
+                          'Maaf, tidak ada sepatu yang ditemukan.',
+                          style: TextStyle(
+                              fontSize: isSmallScreen ? 16 : 18,
+                              color: Colors.grey),
+                          textAlign: TextAlign.center,
+                        ),
+                        Text(
+                          'Coba cari dengan kata kunci lain atau kategori berbeda.',
+                          style: TextStyle(
+                              fontSize: isSmallScreen ? 14 : 16,
+                              color: Colors.grey),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
                     ),
                   )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(8.0),
+                : GridView.builder(
+                    // Menggunakan GridView.builder
+                    padding: EdgeInsets.symmetric(
+                        horizontal: isSmallScreen ? 8.0 : 12.0, vertical: 8.0),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: isSmallScreen
+                          ? 2
+                          : 3, // 2 kolom di HP, 3 kolom di tablet/desktop
+                      crossAxisSpacing:
+                          isSmallScreen ? 8.0 : 12.0, // Spasi antar kolom
+                      mainAxisSpacing:
+                          isSmallScreen ? 8.0 : 12.0, // Spasi antar baris
+                      childAspectRatio: isSmallScreen
+                          ? 0.7
+                          : 0.8, // Rasio aspek untuk tampilan ala Shopee
+                    ),
                     itemCount: allShopShoes.length,
                     itemBuilder: (context, index) {
                       final s = allShopShoes[index];
@@ -2180,7 +1980,6 @@ class _ShopPageState extends State<ShopPage> {
 
                       return GestureDetector(
                         onTap: () {
-                          // NAVIGASI KE DETAIL PAGE SAAT SEPATU DITEKAN
                           Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -2189,60 +1988,68 @@ class _ShopPageState extends State<ShopPage> {
                           );
                         },
                         child: Card(
-                          margin: const EdgeInsets.symmetric(
-                            vertical: 8.0,
-                            horizontal: 4.0,
-                          ),
-                          elevation: 5,
+                          elevation: 8,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(15.0),
+                            borderRadius: BorderRadius.circular(
+                                15.0), // Semua sudut tumpul
                           ),
                           clipBehavior: Clip.antiAlias,
                           child: Stack(
-                            // Gunakan Stack untuk menempatkan label SOLD OUT
                             children: [
-                              Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Container(
-                                      width: 120,
-                                      height: 120,
+                              Column(
+                                // Menggunakan Column untuk gambar di atas, teks di bawah
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  // Gambar Produk (di bagian atas Card)
+                                  Expanded(
+                                    flex: 3, // Proporsi untuk gambar
+                                    child: Container(
                                       decoration: BoxDecoration(
-                                        color: Colors.grey[100],
-                                        borderRadius:
-                                            BorderRadius.circular(10.0),
+                                        color: Colors.grey[50],
+                                        borderRadius: BorderRadius.vertical(
+                                            top: Radius.circular(
+                                                15.0)), // Sudut atas tumpul
+                                        border: Border.all(
+                                            color: Colors.grey.shade200),
                                       ),
                                       child: ClipRRect(
-                                        borderRadius:
-                                            BorderRadius.circular(10.0),
+                                        borderRadius: BorderRadius.vertical(
+                                            top: Radius.circular(
+                                                15.0)), // Sudut atas tumpul
                                         child: s.gambarPath != null &&
                                                 s.gambarPath!.isNotEmpty
                                             ? Image.asset(
                                                 s.gambarPath!,
-                                                fit: BoxFit.cover,
+                                                fit: BoxFit
+                                                    .cover, // Gambar mengisi area
                                                 errorBuilder: (
                                                   context,
                                                   error,
                                                   stackTrace,
                                                 ) {
-                                                  return const Icon(
+                                                  return Icon(
                                                     Icons.broken_image,
-                                                    size: 60,
-                                                    color: Colors.red,
+                                                    size:
+                                                        isSmallScreen ? 50 : 70,
+                                                    color: Colors.red.shade300,
                                                   );
                                                 },
                                               )
                                             : Icon(
-                                                Icons.image,
-                                                size: 60,
+                                                Icons.image_not_supported,
+                                                size: isSmallScreen ? 50 : 70,
                                                 color: Colors.grey[400],
                                               ),
                                       ),
                                     ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
+                                  ),
+                                  // Detail Teks Produk (di bagian bawah Card)
+                                  Expanded(
+                                    flex:
+                                        2, // Proporsi untuk teks dan informasi
+                                    child: Padding(
+                                      padding: EdgeInsets.all(
+                                          isSmallScreen ? 8.0 : 12.0),
                                       child: Column(
                                         crossAxisAlignment:
                                             CrossAxisAlignment.start,
@@ -2255,9 +2062,11 @@ class _ShopPageState extends State<ShopPage> {
                                             children: [
                                               Text(
                                                 s.nama,
-                                                style: const TextStyle(
-                                                  fontSize: 18,
+                                                style: TextStyle(
+                                                  fontSize:
+                                                      isSmallScreen ? 14 : 16,
                                                   fontWeight: FontWeight.bold,
+                                                  color: Colors.black87,
                                                 ),
                                                 maxLines: 2,
                                                 overflow: TextOverflow.ellipsis,
@@ -2265,83 +2074,118 @@ class _ShopPageState extends State<ShopPage> {
                                               Text(
                                                 s.brand,
                                                 style: TextStyle(
-                                                  fontSize: 14,
+                                                  fontSize:
+                                                      isSmallScreen ? 11 : 12,
                                                   color: Colors.grey[600],
                                                 ),
                                               ),
-                                              const SizedBox(height: 4),
+                                              SizedBox(
+                                                  height:
+                                                      isSmallScreen ? 4 : 6),
                                               Text(
                                                 currencyFormatter.format(
                                                   int.tryParse(s.harga) ?? 0,
                                                 ),
-                                                style: const TextStyle(
-                                                  fontSize: 20,
+                                                style: TextStyle(
+                                                  fontSize:
+                                                      isSmallScreen ? 16 : 18,
                                                   fontWeight: FontWeight.bold,
                                                   color: Colors.deepOrange,
                                                 ),
                                               ),
                                             ],
                                           ),
-                                          const SizedBox(height: 8),
-                                          Align(
-                                            alignment: Alignment.bottomRight,
-                                            child: ElevatedButton(
-                                              onPressed: isSoldOut
-                                                  ? null
-                                                  : () {
-                                                      sepatuProvider
-                                                          .addToCart(s);
-                                                      ScaffoldMessenger.of(
-                                                        context,
-                                                      ).showSnackBar(
-                                                        SnackBar(
-                                                          content: Text(
-                                                            "${s.nama} ditambahkan ke keranjang!",
-                                                          ),
-                                                        ),
-                                                      );
-                                                    },
-                                              style: ElevatedButton.styleFrom(
-                                                backgroundColor: isSoldOut
-                                                    ? Colors.grey
-                                                    : Colors.blueAccent,
-                                                foregroundColor: Colors.white,
-                                                shape: RoundedRectangleBorder(
+                                          const Spacer(), // Mendorong informasi ke bawah
+                                          // Informasi Jarak Pengantaran, Diskon, dan Jumlah Terjual
+                                          Wrap(
+                                            // Menggunakan Wrap agar informasi bisa ke baris baru jika tidak cukup
+                                            spacing: isSmallScreen ? 4.0 : 8.0,
+                                            runSpacing:
+                                                isSmallScreen ? 4.0 : 8.0,
+                                            children: [
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        vertical: 4,
+                                                        horizontal: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.blue.shade100,
                                                   borderRadius:
                                                       BorderRadius.circular(8),
                                                 ),
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                  horizontal: 20,
-                                                  vertical: 10,
+                                                child: Text(
+                                                  'Jarak: 5 km', // Ganti dengan data yang sesuai
+                                                  style: TextStyle(
+                                                      color: Colors.blue,
+                                                      fontSize: isSmallScreen
+                                                          ? 10
+                                                          : 12),
                                                 ),
                                               ),
-                                              child: Text(isSoldOut
-                                                  ? "Stok Habis"
-                                                  : "Tambah ke Keranjang"),
-                                            ),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        vertical: 4,
+                                                        horizontal: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.green.shade100,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  'Diskon: 20%', // Ganti dengan data yang sesuai
+                                                  style: TextStyle(
+                                                      color: Colors.green,
+                                                      fontSize: isSmallScreen
+                                                          ? 10
+                                                          : 12),
+                                                ),
+                                              ),
+                                              Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        vertical: 4,
+                                                        horizontal: 8),
+                                                decoration: BoxDecoration(
+                                                  color: Colors.orange.shade100,
+                                                  borderRadius:
+                                                      BorderRadius.circular(8),
+                                                ),
+                                                child: Text(
+                                                  'Terjual: 50', // Ganti dengan data yang sesuai
+                                                  style: TextStyle(
+                                                      color: Colors.orange,
+                                                      fontSize: isSmallScreen
+                                                          ? 10
+                                                          : 12),
+                                                ),
+                                              ),
+                                            ],
                                           ),
                                         ],
                                       ),
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
-                              if (isSoldOut) // Label "SOLD OUT" jika stok 0
+                              if (isSoldOut)
                                 Positioned.fill(
                                   child: Container(
                                     decoration: BoxDecoration(
-                                      color: Colors.black.withOpacity(0.5),
-                                      borderRadius: BorderRadius.circular(15.0),
+                                      color: Colors.black.withOpacity(0.6),
+                                      borderRadius: BorderRadius.circular(
+                                          15.0), // Sudut tumpul
                                     ),
-                                    child: const Center(
+                                    child: Center(
                                       child: Text(
                                         'SOLD OUT',
+                                        textAlign: TextAlign.center,
                                         style: TextStyle(
                                           color: Colors.white,
-                                          fontSize: 28,
+                                          fontSize: isSmallScreen ? 20 : 28,
                                           fontWeight: FontWeight.bold,
-                                          letterSpacing: 2,
+                                          letterSpacing:
+                                              isSmallScreen ? 1.5 : 2.5,
                                         ),
                                       ),
                                     ),
@@ -2366,26 +2210,28 @@ class _ShopPageState extends State<ShopPage> {
         backgroundColor: Colors.teal,
         child: Stack(
           children: [
-            const Icon(Icons.shopping_cart, color: Colors.white),
+            const Icon(Icons.shopping_cart, color: Colors.white, size: 28),
             if (sepatuProvider.cart.isNotEmpty)
               Positioned(
                 right: 0,
                 top: 0,
                 child: Container(
-                  padding: const EdgeInsets.all(2),
+                  padding: const EdgeInsets.all(4),
                   decoration: BoxDecoration(
                     color: Colors.red,
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.white, width: 1.5),
                   ),
                   constraints: const BoxConstraints(
-                    minWidth: 16,
-                    minHeight: 16,
+                    minWidth: 22,
+                    minHeight: 22,
                   ),
                   child: Text(
                     '${sepatuProvider.cart.length}',
                     style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 10,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -2401,10 +2247,16 @@ class _ShopPageState extends State<ShopPage> {
 // =============================================================================
 // HALAMAN DETAIL (DetailPage)
 // =============================================================================
-class DetailPage extends StatelessWidget {
+class DetailPage extends StatefulWidget {
+  // Ubah menjadi StatefulWidget
   final Sepatu sepatu;
   const DetailPage({super.key, required this.sepatu});
 
+  @override
+  State<DetailPage> createState() => _DetailPageState();
+}
+
+class _DetailPageState extends State<DetailPage> {
   @override
   Widget build(BuildContext context) {
     final currencyFormatter = NumberFormat.currency(
@@ -2412,29 +2264,38 @@ class DetailPage extends StatelessWidget {
       symbol: 'Rp',
       decimalDigits: 0,
     );
-    final sepatuProvider = Provider.of<SepatuProvider>(context, listen: false);
-    final isSoldOut = (int.tryParse(sepatu.jumlah) ?? 0) <= 0;
+    final sepatuProvider = Provider.of<SepatuProvider>(context);
+    final isSoldOut = (int.tryParse(widget.sepatu.jumlah) ?? 0) <= 0;
+    final isFavorite = sepatuProvider.isFavorite(widget.sepatu);
+    final reviews = sepatuProvider.getReviewsForSepatu(widget.sepatu.barcode);
+    final averageRating =
+        sepatuProvider.getAverageRatingForSepatu(widget.sepatu.barcode);
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(sepatu.nama),
+        title: Text(widget.sepatu.nama),
         actions: [
+          IconButton(
+            icon: Icon(
+              isFavorite ? Icons.favorite : Icons.favorite_border,
+              color: isFavorite ? Colors.red : Colors.white,
+            ),
+            onPressed: () {
+              sepatuProvider.toggleFavorite(widget.sepatu);
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content: Text(isFavorite
+                        ? '${widget.sepatu.nama} dihapus dari favorit.'
+                        : '${widget.sepatu.nama} ditambahkan ke favorit!')),
+              );
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () {
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
                     content: Text('Fungsi Share belum diimplementasikan')),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons
-                .favorite_border), // Atau Icons.favorite jika sudah difavoritkan
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                    content: Text('Fungsi Favorit belum diimplementasikan')),
               );
             },
           ),
@@ -2448,14 +2309,11 @@ class DetailPage extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Row(
-                // Menggunakan Row untuk menempatkan gambar dan nama berdampingan
-                crossAxisAlignment:
-                    CrossAxisAlignment.start, // Align items to the top
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   // Gambar Produk (di kiri)
                   Container(
-                    width: 150, // Lebar tetap untuk gambar
-                    // height: 150, // Hapus atau sesuaikan jika ingin tinggi tetap
+                    width: 150,
                     decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(15),
                       color: Colors.grey[100],
@@ -2472,12 +2330,11 @@ class DetailPage extends StatelessWidget {
                       borderRadius: BorderRadius.circular(15),
                       child: Stack(
                         children: [
-                          sepatu.gambarPath != null &&
-                                  sepatu.gambarPath!.isNotEmpty
+                          widget.sepatu.gambarPath != null &&
+                                  widget.sepatu.gambarPath!.isNotEmpty
                               ? Image.asset(
-                                  sepatu.gambarPath!,
-                                  fit: BoxFit
-                                      .contain, // Sesuaikan agar gambar pas di dalam box
+                                  widget.sepatu.gambarPath!,
+                                  fit: BoxFit.contain,
                                   errorBuilder: (context, error, stackTrace) {
                                     return const Icon(
                                       Icons.broken_image,
@@ -2504,8 +2361,7 @@ class DetailPage extends StatelessWidget {
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       color: Colors.white,
-                                      fontSize:
-                                          20, // Ukuran font lebih kecil agar muat
+                                      fontSize: 20,
                                       fontWeight: FontWeight.bold,
                                       letterSpacing: 1,
                                     ),
@@ -2517,27 +2373,25 @@ class DetailPage extends StatelessWidget {
                       ),
                     ),
                   ),
-                  const SizedBox(width: 16), // Jarak antara gambar dan teks
+                  const SizedBox(width: 16),
                   // Nama Sepatu (di sebelah kanan gambar)
                   Expanded(
-                    // Menggunakan Expanded agar teks tidak overflow
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          sepatu.nama,
+                          widget.sepatu.nama,
                           style: const TextStyle(
                             fontSize: 24,
                             fontWeight: FontWeight.bold,
                             color: Colors.black87,
                           ),
-                          maxLines: 2, // Batasi jumlah baris
-                          overflow: TextOverflow
-                              .ellipsis, // Tambahkan ellipsis jika teks terlalu panjang
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          sepatu.brand,
+                          widget.sepatu.brand,
                           style: TextStyle(
                             fontSize: 16,
                             color: Colors.grey[700],
@@ -2547,7 +2401,7 @@ class DetailPage extends StatelessWidget {
                         const SizedBox(height: 8),
                         Text(
                           currencyFormatter
-                              .format(int.tryParse(sepatu.harga) ?? 0),
+                              .format(int.tryParse(widget.sepatu.harga) ?? 0),
                           style: const TextStyle(
                             fontSize: 28,
                             fontWeight: FontWeight.bold,
@@ -2557,12 +2411,12 @@ class DetailPage extends StatelessWidget {
                         const SizedBox(height: 8),
                         Row(
                           children: [
-                            const Icon(Icons.star,
-                                color: Colors.amber, size: 18),
-                            const Text(' 4.9 (1.2k Rating)'),
+                            Icon(Icons.star, color: Colors.amber, size: 18),
+                            Text(
+                                ' ${averageRating.toStringAsFixed(1)} (${reviews.length} Ulasan)'), // Tampilkan rata-rata rating
                             const SizedBox(width: 16),
                             Text(
-                                'Terjual ${100 - (int.tryParse(sepatu.jumlah) ?? 0)}'),
+                                'Terjual ${100 - (int.tryParse(widget.sepatu.jumlah) ?? 0)}'),
                           ],
                         ),
                       ],
@@ -2571,7 +2425,7 @@ class DetailPage extends StatelessWidget {
                 ],
               ),
             ),
-            const Divider(height: 24), // Divider setelah bagian gambar dan nama
+            const Divider(height: 24),
 
             // Bagian Variasi/Opsi
             Padding(
@@ -2591,20 +2445,20 @@ class DetailPage extends StatelessWidget {
                   const SizedBox(height: 8),
                   Wrap(
                     spacing: 8.0,
-                    runSpacing: 8.0, // Jarak antar baris chip
+                    runSpacing: 8.0,
                     children: [
                       Chip(
-                        label: Text('Ukuran: ${sepatu.ukuran}'),
+                        label: Text('Ukuran: ${widget.sepatu.ukuran}'),
                         backgroundColor: Colors.blue.shade100,
                         labelStyle: const TextStyle(color: Colors.blue),
                       ),
                       Chip(
-                        label: Text('Stok: ${sepatu.jumlah}'),
+                        label: Text('Stok: ${widget.sepatu.jumlah}'),
                         backgroundColor: Colors.green.shade100,
                         labelStyle: const TextStyle(color: Colors.green),
                       ),
                       Chip(
-                        label: Text('Kategori: ${sepatu.kategori}'),
+                        label: Text('Kategori: ${widget.sepatu.kategori}'),
                         backgroundColor: Colors.purple.shade100,
                         labelStyle: const TextStyle(color: Colors.purple),
                       ),
@@ -2632,19 +2486,19 @@ class DetailPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    sepatu.detail,
+                    widget.sepatu.detail,
                     style: const TextStyle(fontSize: 16, height: 1.5),
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'Barcode: ${sepatu.barcode}',
+                    'Barcode: ${widget.sepatu.barcode}',
                     style: TextStyle(
                       fontSize: 16,
                       color: Colors.grey[700],
                     ),
                   ),
                   Text(
-                    'Waktu Input: ${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(sepatu.waktuInput))}',
+                    'Waktu Input: ${DateFormat('dd MMM yyyy, HH:mm').format(DateTime.parse(widget.sepatu.waktuInput))}',
                     style: TextStyle(
                       fontSize: 16,
                       color: Colors.grey[700],
@@ -2655,30 +2509,93 @@ class DetailPage extends StatelessWidget {
             ),
             const Divider(height: 24),
 
-            // Bagian Ulasan (Placeholder)
+            // Bagian Ulasan Pembeli
             Padding(
               padding:
                   const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'Ulasan Pembeli',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.black87,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Ulasan Pembeli',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () {
+                          _showAddReviewDialog(context, widget.sepatu.barcode);
+                        },
+                        child: const Text('Tambah Ulasan'),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 8),
-                  const Text('Belum ada ulasan untuk produk ini.',
-                      style: TextStyle(color: Colors.grey)),
+                  if (reviews.isEmpty)
+                    const Text('Belum ada ulasan untuk produk ini.',
+                        style: TextStyle(color: Colors.grey))
+                  else
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics:
+                          const NeverScrollableScrollPhysics(), // Agar tidak scroll sendiri
+                      itemCount: reviews.length,
+                      itemBuilder: (context, idx) {
+                        final review = reviews[idx];
+                        return Card(
+                          margin: const EdgeInsets.symmetric(vertical: 4.0),
+                          elevation: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      review.userName,
+                                      style: const TextStyle(
+                                          fontWeight: FontWeight.bold),
+                                    ),
+                                    Row(
+                                      children: List.generate(5, (i) {
+                                        return Icon(
+                                          i < review.rating
+                                              ? Icons.star
+                                              : Icons.star_border,
+                                          color: Colors.amber,
+                                          size: 16,
+                                        );
+                                      }),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Text(review.comment),
+                                const SizedBox(height: 4),
+                                Text(
+                                  DateFormat('dd MMM yyyy').format(
+                                      DateTime.parse(review.reviewTime)),
+                                  style: TextStyle(
+                                      fontSize: 12, color: Colors.grey[600]),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
                 ],
               ),
             ),
-            const SizedBox(
-                height:
-                    16), // Tambahkan sedikit padding di bagian bawah sebelum bottom bar
+            const SizedBox(height: 16),
           ],
         ),
       ),
@@ -2713,11 +2630,11 @@ class DetailPage extends StatelessWidget {
                 onPressed: isSoldOut
                     ? null
                     : () {
-                        sepatuProvider.addToCart(sepatu);
+                        sepatuProvider.addToCart(widget.sepatu);
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                                "${sepatu.nama} ditambahkan ke keranjang!"),
+                                "${widget.sepatu.nama} ditambahkan ke keranjang!"),
                             duration: const Duration(seconds: 1),
                           ),
                         );
@@ -2741,7 +2658,7 @@ class DetailPage extends StatelessWidget {
                 onPressed: isSoldOut
                     ? null
                     : () {
-                        sepatuProvider.addToCart(sepatu);
+                        sepatuProvider.addToCart(widget.sepatu);
                         Navigator.push(
                           context,
                           MaterialPageRoute(builder: (_) => const CartPage()),
@@ -2749,7 +2666,7 @@ class DetailPage extends StatelessWidget {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
                             content: Text(
-                                "${sepatu.nama} ditambahkan ke keranjang dan siap checkout!"),
+                                "${widget.sepatu.nama} ditambahkan ke keranjang dan siap checkout!"),
                             duration: const Duration(seconds: 2),
                           ),
                         );
@@ -2769,6 +2686,98 @@ class DetailPage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+
+  void _showAddReviewDialog(BuildContext context, String sepatuBarcode) {
+    final _formKey = GlobalKey<FormState>();
+    final _commentController = TextEditingController();
+    int _selectedRating = 0; // Rating yang dipilih pengguna
+
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Tambah Ulasan'),
+          content: SingleChildScrollView(
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('Berikan Rating:'),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: List.generate(5, (index) {
+                      return IconButton(
+                        icon: Icon(
+                          index < _selectedRating
+                              ? Icons.star
+                              : Icons.star_border,
+                          color: Colors.amber,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            // Perbarui state di dialog
+                            _selectedRating = index + 1;
+                          });
+                          (dialogContext as Element)
+                              .markNeedsBuild(); // Paksa rebuild dialog
+                        },
+                      );
+                    }),
+                  ),
+                  TextFormField(
+                    controller: _commentController,
+                    decoration: const InputDecoration(
+                      labelText: 'Komentar Anda',
+                      border: OutlineInputBorder(),
+                    ),
+                    maxLines: 3,
+                    validator: (val) {
+                      if (val!.isEmpty) return 'Komentar tidak boleh kosong';
+                      return null;
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (_formKey.currentState!.validate() && _selectedRating > 0) {
+                  final newReview = Review(
+                    sepatuBarcode: sepatuBarcode,
+                    userName:
+                        "Pengguna Baru", // Ganti dengan nama pengguna asli jika ada sistem login
+                    rating: _selectedRating,
+                    comment: _commentController.text,
+                    reviewTime: DateTime.now().toString(),
+                  );
+                  Provider.of<SepatuProvider>(dialogContext, listen: false)
+                      .addReview(newReview);
+                  Navigator.pop(dialogContext);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text('Ulasan berhasil ditambahkan!')),
+                  );
+                } else if (_selectedRating == 0) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                        content: Text('Mohon berikan rating bintang.')),
+                  );
+                }
+              },
+              child: const Text('Kirim Ulasan'),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -3166,141 +3175,302 @@ class RiwayatBeliPage extends StatelessWidget {
       symbol: 'Rp',
       decimalDigits: 0,
     );
-    final dateFormatter = DateFormat('dd MMM, HH:mm');
+    final dateFormatter =
+        DateFormat('dd MMM yyyy, HH:mm'); // Format lebih lengkap
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Riwayat Pembelian")),
+      appBar: AppBar(
+        title: const Text(
+          "Riwayat Pembelian",
+          style: TextStyle(
+            fontWeight: FontWeight.bold,
+            fontSize: 20,
+          ),
+        ),
+        centerTitle: true,
+        elevation: 0, // Hapus shadow AppBar
+      ),
       body: riwayatBeli.isEmpty
-          ? const Center(
-              child: Text(
-                'Belum ada riwayat pembelian.',
-                style: TextStyle(fontSize: 18, color: Colors.grey),
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.shopping_bag_outlined,
+                    size: 100,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Belum ada riwayat pembelian.',
+                    style: TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
+                  const Text(
+                    'Mulai belanja sekarang!',
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 20),
+                  ElevatedButton.icon(
+                    onPressed: () {
+                      // Navigasi kembali ke ShopPage atau halaman utama belanja
+                      Navigator.popUntil(
+                          context, (route) => route.isFirst); // Kembali ke root
+                      Navigator.pushReplacement(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) =>
+                                  const ShopPage())); // Atau langsung ke ShopPage
+                    },
+                    icon: const Icon(Icons.store),
+                    label: const Text('Belanja Sekarang'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Theme.of(context).primaryColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 12),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             )
           : ListView.builder(
-              padding: const EdgeInsets.all(8.0),
+              padding: const EdgeInsets.all(12.0), // Padding lebih besar
               itemCount: riwayatBeli.length,
               itemBuilder: (context, index) {
                 final pembelian = riwayatBeli[index];
 
                 return Card(
-                  margin: const EdgeInsets.symmetric(vertical: 6.0),
-                  elevation: 3,
+                  margin: const EdgeInsets.symmetric(vertical: 8.0),
+                  elevation: 6, // Shadow lebih jelas
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius:
+                        BorderRadius.circular(15), // Sudut lebih membulat
                   ),
+                  clipBehavior: Clip.antiAlias, // Penting untuk gambar
                   child: Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: ListTile(
-                      leading: pembelian.gambarPath != null &&
-                              pembelian.gambarPath!.isNotEmpty
-                          ? Image.asset(
-                              pembelian.gambarPath!,
-                              width: 60,
-                              height: 60,
-                              fit: BoxFit.cover,
-                              errorBuilder: (context, error, stackTrace) {
-                                return const Icon(
-                                  Icons.broken_image,
-                                  size: 60,
-                                  color: Colors.red,
-                                );
-                              },
-                            )
-                          : Container(
-                              width: 60,
-                              height: 60,
-                              color: Colors.grey[200],
-                              child: Icon(
-                                Icons.shopping_bag,
-                                size: 30,
-                                color: Colors.grey[400],
+                    padding: const EdgeInsets.all(
+                        16.0), // Padding internal lebih besar
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Gambar Produk
+                            Container(
+                              width: 80,
+                              height: 80,
+                              decoration: BoxDecoration(
+                                color: Colors.grey[100],
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(10),
+                                child: pembelian.gambarPath != null &&
+                                        pembelian.gambarPath!.isNotEmpty
+                                    ? Image.asset(
+                                        pembelian.gambarPath!,
+                                        fit: BoxFit.cover,
+                                        errorBuilder:
+                                            (context, error, stackTrace) {
+                                          return Icon(
+                                            Icons.broken_image,
+                                            size: 50,
+                                            color: Colors.red.shade300,
+                                          );
+                                        },
+                                      )
+                                    : Icon(
+                                        Icons.image_not_supported,
+                                        size: 50,
+                                        color: Colors.grey[400],
+                                      ),
                               ),
                             ),
-                      title: Text(
-                        pembelian.namaSepatu,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 16,
+                            const SizedBox(width: 16),
+                            // Detail Produk
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    pembelian.namaSepatu,
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                      color: Colors.black87,
+                                    ),
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    pembelian.brandSepatu,
+                                    style: TextStyle(
+                                      color: Colors.grey[600],
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    currencyFormatter.format(
+                                      int.tryParse(pembelian.hargaSepatu) ?? 0,
+                                    ),
+                                    style: const TextStyle(
+                                      color: Colors.deepOrange,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 18,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text("Brand: ${pembelian.brandSepatu}"),
-                          Text(
-                            currencyFormatter.format(
-                              int.tryParse(pembelian.hargaSepatu) ?? 0,
-                            ),
-                            style: const TextStyle(
-                              color: Colors.deepOrange,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            'Status: ${pembelian.isConfirmed ? 'Dikonfirmasi' : 'Menunggu Konfirmasi'}',
-                            style: TextStyle(
-                              fontSize: 12,
+                        const Divider(
+                            height: 24,
+                            thickness: 1), // Divider yang lebih baik
+
+                        // Status Pembelian (Badge)
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 5),
+                            decoration: BoxDecoration(
                               color: pembelian.isConfirmed
-                                  ? Colors.green
-                                  : Colors.orange,
-                              fontWeight: FontWeight.bold,
+                                  ? Colors.green.shade100
+                                  : Colors.orange.shade100,
+                              borderRadius: BorderRadius.circular(20),
                             ),
-                          ),
-                          if (pembelian.isConfirmed &&
-                              pembelian.pembeliNama != null)
-                            Text('Pembeli: ${pembelian.pembeliNama}'),
-                          if (pembelian.isConfirmed &&
-                              pembelian.alamatKirim != null)
-                            Text(
-                              'Alamat: ${pembelian.alamatKirim}',
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          Text(
-                            'Waktu Beli: ${dateFormatter.format(DateTime.parse(pembelian.waktuPembelian))}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey[600],
-                            ),
-                          ),
-                        ],
-                      ),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (!pembelian.isConfirmed)
-                            ElevatedButton(
-                              onPressed: () {
-                                _showConfirmDialog(context, index, pembelian);
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 10, vertical: 5),
+                            child: Text(
+                              pembelian.isConfirmed
+                                  ? 'Dikonfirmasi'
+                                  : 'Menunggu Konfirmasi',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: pembelian.isConfirmed
+                                    ? Colors.green.shade700
+                                    : Colors.orange.shade700,
                               ),
-                              child: const Text('Konfirmasi'),
                             ),
-                          const SizedBox(width: 8),
-                          ElevatedButton(
-                            onPressed: () {
-                              sepatuProvider.cancelPurchase(index);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                    content: Text('Pembelian dibatalkan.')),
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.red,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 10, vertical: 5),
-                            ),
-                            child: const Text('Batalkan'),
                           ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        // Detail Pembeli (jika sudah dikonfirmasi)
+                        if (pembelian.isConfirmed) ...[
+                          const Text(
+                            'Detail Pengiriman:',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                              color: Colors.black87,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.person_outline,
+                                  size: 18, color: Colors.grey[600]),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  pembelian.pembeliNama ?? 'N/A',
+                                  style: TextStyle(color: Colors.grey[700]),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.location_on_outlined,
+                                  size: 18, color: Colors.grey[600]),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  pembelian.alamatKirim ?? 'N/A',
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: Colors.grey[700]),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 12),
                         ],
-                      ),
+
+                        // Waktu Pembelian
+                        Row(
+                          children: [
+                            Icon(Icons.access_time,
+                                size: 16, color: Colors.grey[500]),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Waktu Beli: ${dateFormatter.format(DateTime.parse(pembelian.waktuPembelian))}',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+
+                        // Tombol Aksi
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (!pembelian.isConfirmed)
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () {
+                                    _showConfirmDialog(
+                                        context, index, pembelian);
+                                  },
+                                  icon: const Icon(Icons.check_circle_outline),
+                                  label: const Text('Konfirmasi'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green,
+                                    foregroundColor: Colors.white,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(
+                                        vertical: 10),
+                                  ),
+                                ),
+                              ),
+                            if (!pembelian.isConfirmed)
+                              const SizedBox(width: 10),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () {
+                                  _showCancelConfirmationDialog(context, index);
+                                },
+                                icon: const Icon(Icons.cancel_outlined),
+                                label: const Text('Batalkan'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red,
+                                  side: const BorderSide(color: Colors.red),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 10),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ),
                   ),
                 );
@@ -3329,14 +3499,18 @@ class RiwayatBeliPage extends StatelessWidget {
                   TextFormField(
                     controller: namaController,
                     decoration: const InputDecoration(
-                        labelText: 'Nama Lengkap Pembeli'),
+                        labelText: 'Nama Lengkap Pembeli',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.person)),
                     validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
                     controller: alamatController,
-                    decoration:
-                        const InputDecoration(labelText: 'Alamat Pengiriman'),
+                    decoration: const InputDecoration(
+                        labelText: 'Alamat Pengiriman',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.location_on)),
                     maxLines: 3,
                     validator: (val) => val!.isEmpty ? 'Wajib diisi' : null,
                   ),
@@ -3362,7 +3536,46 @@ class RiwayatBeliPage extends StatelessWidget {
                   );
                 }
               },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
               child: const Text('Konfirmasi'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showCancelConfirmationDialog(BuildContext context, int index) {
+    showDialog(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          title: const Text('Batalkan Pembelian?'),
+          content: const Text(
+              'Apakah Anda yakin ingin membatalkan pembelian ini? Stok akan dikembalikan.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Tidak'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Provider.of<SepatuProvider>(dialogContext, listen: false)
+                    .cancelPurchase(index);
+                Navigator.pop(dialogContext);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                      content: Text('Pembelian berhasil dibatalkan.')),
+                );
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('Ya, Batalkan'),
             ),
           ],
         );
@@ -3371,8 +3584,142 @@ class RiwayatBeliPage extends StatelessWidget {
   }
 }
 
+// Add this extension for firstWhereOrNull if not already available
+extension IterableExtension<T> on Iterable<T> {
+  T? firstWhereOrNull(bool Function(T) test) {
+    for (var element in this) {
+      if (test(element)) {
+        return element;
+      }
+    }
+    return null;
+  }
+}
+
 // =============================================================================
-// HALAMAN PROFIL SAYA (MyProfilePage) - BARU
+// HALAMAN FAVORIT (FavoritePage) - BARU
+// =============================================================================
+class FavoritePage extends StatelessWidget {
+  const FavoritePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final sepatuProvider = Provider.of<SepatuProvider>(context);
+    final favoriteItems = sepatuProvider.favoriteSepatu;
+
+    final currencyFormatter = NumberFormat.currency(
+      locale: 'id_ID',
+      symbol: 'Rp',
+      decimalDigits: 0,
+    );
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Daftar Favorit'),
+      ),
+      body: favoriteItems.isEmpty
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.favorite_border,
+                    size: 100,
+                    color: Colors.grey[400],
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Belum ada sepatu di daftar favorit Anda.',
+                    style: TextStyle(fontSize: 18, color: Colors.grey),
+                  ),
+                  const Text(
+                    'Tambahkan sepatu yang Anda suka!',
+                    style: TextStyle(fontSize: 16, color: Colors.grey),
+                  ),
+                ],
+              ),
+            )
+          : ListView.builder(
+              padding: const EdgeInsets.all(12.0),
+              itemCount: favoriteItems.length,
+              itemBuilder: (context, index) {
+                final sepatu = favoriteItems[index];
+                return Card(
+                  margin: const EdgeInsets.symmetric(vertical: 8.0),
+                  elevation: 5,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(15.0),
+                  ),
+                  child: ListTile(
+                    leading: Container(
+                      width: 70,
+                      height: 70,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        color: Colors.grey[100],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: sepatu.gambarPath != null &&
+                                sepatu.gambarPath!.isNotEmpty
+                            ? Image.asset(
+                                sepatu.gambarPath!,
+                                fit: BoxFit.cover,
+                                errorBuilder: (context, error, stackTrace) {
+                                  return const Icon(Icons.broken_image,
+                                      size: 40, color: Colors.red);
+                                },
+                              )
+                            : Icon(Icons.image,
+                                size: 40, color: Colors.grey[400]),
+                      ),
+                    ),
+                    title: Text(
+                      sepatu.nama,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold, fontSize: 16),
+                    ),
+                    subtitle: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(sepatu.brand),
+                        Text(
+                          currencyFormatter
+                              .format(int.tryParse(sepatu.harga) ?? 0),
+                          style: const TextStyle(
+                              color: Colors.deepOrange,
+                              fontWeight: FontWeight.bold),
+                        ),
+                      ],
+                    ),
+                    trailing: IconButton(
+                      icon: const Icon(Icons.favorite, color: Colors.red),
+                      onPressed: () {
+                        sepatuProvider.toggleFavorite(sepatu);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                              content:
+                                  Text('${sepatu.nama} dihapus dari favorit.')),
+                        );
+                      },
+                    ),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (context) => DetailPage(sepatu: sepatu)),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+    );
+  }
+}
+
+// =============================================================================
+// HALAMAN PROFIL SAYA (MyProfilePage) - Dengan Navigasi Favorit
 // =============================================================================
 class MyProfilePage extends StatelessWidget {
   const MyProfilePage({super.key});
@@ -3432,6 +3779,25 @@ class MyProfilePage extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 16),
+            // Navigasi ke Daftar Favorit (BARU)
+            Card(
+              elevation: 4,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(10)),
+              child: ListTile(
+                leading: const Icon(Icons.favorite, color: Colors.redAccent),
+                title: const Text('Daftar Favorit',
+                    style: TextStyle(fontSize: 16)),
+                trailing: const Icon(Icons.arrow_forward_ios, size: 18),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const FavoritePage()),
+                  );
+                },
+              ),
+            ),
+            const SizedBox(height: 16),
             // Tombol Logout
             SizedBox(
               width: double.infinity,
@@ -3459,17 +3825,5 @@ class MyProfilePage extends StatelessWidget {
         ),
       ),
     );
-  }
-}
-
-// Add this extension for firstWhereOrNull if not already available
-extension IterableExtension<T> on Iterable<T> {
-  T? firstWhereOrNull(bool Function(T) test) {
-    for (var element in this) {
-      if (test(element)) {
-        return element;
-      }
-    }
-    return null;
   }
 }
